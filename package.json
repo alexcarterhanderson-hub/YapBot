@@ -1,0 +1,16 @@
+{
+  "name": "yapbot",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Discord voice TTS bot with free Edge speech and voice diagnostics",
+  "engines": { "node": ">=24.17.0" },
+  "scripts": { "start": "node bot.js", "check": "node --check bot.js", "test": "node --test test.js" },
+  "dependencies": {
+    "@discordjs/voice": "0.19.2",
+    "discord.js": "^14.25.1",
+    "dotenv": "^16.4.7",
+    "ffmpeg-static": "^5.2.0",
+    "node-edge-tts": "1.2.11",
+    "opusscript": "^0.0.8"
+  }
+}
