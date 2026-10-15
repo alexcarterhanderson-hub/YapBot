@@ -1,5 +1,7 @@
 # YapBot — Node.js version
 
+A Discord bot originally made by Edward to read text aloud.
+
 ## Voice picker update
 
 `/voice` now labels every option as **Name | Gender | Accent | Language**, with British voices first:
