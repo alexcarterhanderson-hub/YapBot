@@ -26,7 +26,7 @@ DISCORD_TOKEN=your_existing_bot_token
 GUILD_ID=your_server_id
 ```
 
-4. In https://discord.com/developers/applications → your bot → Bot, enable **Message Content Intent** and **Server Members Intent**. These are used for `=messages` and member audit logs. Keep your token private.
+4. In https://discord.com/developers/applications → your bot → Bot, enable **Message Content Intent** for `=messages`. Keep your token private.
 5. Open a terminal inside the extracted folder:
 
 ```powershell
@@ -77,15 +77,15 @@ If permissions all show YES but joining times out, inspect `[JOIN]` and `[COME]`
 
 Auto-disconnect: when everyone leaves the VC, or after 5 minutes idle, checked every 15 seconds. If user `1440771740920971296` leaves the bot's VC, the bot logs a 3-minute countdown and disconnects when it expires; rejoining that VC cancels the countdown. That user's 3-minute grace period takes precedence over the empty-channel disconnect, including if they were the last person in the VC. Other empty voice channels still cause an immediate disconnect.
 
-## Security and activity logs
+## Speech logs
 
-The bot sends rich audit embeds to channel `1500372280637915177`. It logs guild message content and edits/deletions (including available attachment links), slash-command options and outcomes, voice joins/leaves and state changes, member joins/leaves/updates, bans, channel and role changes, and Discord audit-log actions. The audit channel itself is excluded from message-content logging to prevent log recursion.
+The bot sends a rich embed to channel `1500372280637915177` only when someone sends text for the bot to read: a valid `=message` in the text channel bound by `/come`, or a `/say` command. Each embed shows who said it, their text, and its source. Normal chat, other slash commands, voice activity, member changes, and server events are not sent to this channel.
 
-Because message contents and attachment URLs are included, restrict access to the audit channel to trusted moderators. The bot needs View Channel, Send Messages, Embed Links, and View Audit Log in that channel. Startup checks those permissions and stops with an explicit error if the audit destination is unavailable. Audit logs are messages in your Discord server; they are subject to your server's retention and access settings.
+The bot needs View Channel, Send Messages, and Embed Links in that channel. Startup checks those permissions and stops with an explicit error if the destination is unavailable.
 
 ## Bot invite and registration
 
-Use OAuth2 URL Generator in the Developer Portal with `bot` and `applications.commands`. Give the bot View Channels, Send Messages, Embed Links, Connect, Speak, and Use Voice Activity; also grant View Audit Log for server audit events. Invite the existing application to your server if needed. No second bot account is required.
+Use OAuth2 URL Generator in the Developer Portal with `bot` and `applications.commands`. Give the bot View Channels, Send Messages, Embed Links, Connect, Speak, and Use Voice Activity. Invite the existing application to your server if needed. No second bot account is required.
 
 On startup the package **replaces the guild-scoped slash-command list for this bot application in GUILD_ID** with the 11 commands above. This is intended for the dedicated YapBot application. Do not use a token belonging to a different multipurpose bot whose commands you need to retain. Commands are registered only in that server; the voice logic supports multiple servers if you add equivalent command registration there. Old global commands are not deleted by this package.
 

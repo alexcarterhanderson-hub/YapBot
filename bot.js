@@ -20,7 +20,6 @@ const DELAYED_LEAVE_USER_ID = '1440771740920971296';
 const LEAVE_GRACE_MS = 3 * 60 * 1000;
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates,
-    GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildModeration,
     GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
   allowedMentions: { parse: [], repliedUser: false },
 });
@@ -89,12 +88,12 @@ function buildAuditEmbed({ guild, title, description, color = 0x5865F2, fields =
   const embed = new EmbedBuilder()
     .setColor(color)
     .setAuthor({
-      name: 'YapBot  •  Security & Activity Log',
+      name: 'YapBot  •  Speech Log',
       ...(client.user && { iconURL: client.user.displayAvatarURL() }),
     })
     .setTitle(truncate(title, 256))
     .setTimestamp()
-    .setFooter({ text: `YapBot Audit  •  ${guild?.name || 'Discord'}` });
+    .setFooter({ text: `Speech log  •  ${guild?.name || 'Discord'}` });
   if (description) embed.setDescription(truncate(description, 4096));
   const icon = guild?.iconURL({ size: 128 });
   if (icon) embed.setThumbnail(icon);
@@ -118,17 +117,6 @@ async function auditLog({ guild, title, description, color, fields = [] }) {
   } catch (e) {
     console.error('[AUDIT]', e.message);
   }
-}
-function commandOptions(options) {
-  const values = [];
-  const visit = entries => {
-    for (const entry of entries || []) {
-      if (entry.options?.length) visit(entry.options);
-      else if (entry.value !== undefined) values.push(`${entry.name}: ${entry.value}`);
-    }
-  };
-  visit(options);
-  return values.join('\n') || 'No options';
 }
 function channelField(channel) {
   return channel ? `${channel} (${channel.id})` : 'Unknown channel';
@@ -186,24 +174,10 @@ class Session {
     this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Pause } });
     this.player.on('error', e => {
       console.error('[PLAYER]', e.message);
-      auditLog({
-        guild: this.guild,
-        title: '⚠️ Audio player error',
-        description: e.message,
-        color: 0xED4245,
-        fields: [{ name: 'Voice channel', value: `<#${this.channelId}>` }],
-      });
     });
     this.subscription = connection.subscribe(this.player);
     connection.on('error', e => {
       console.error('[VOICE]', e.message);
-      auditLog({
-        guild: this.guild,
-        title: '⚠️ Voice connection error',
-        description: e.message,
-        color: 0xED4245,
-        fields: [{ name: 'Voice channel', value: `<#${this.channelId}>` }],
-      });
     });
     connection.on(VCS.Disconnected, () => {
       this.recover().catch(e => console.error('[RECOVER]', e.message));
@@ -234,17 +208,7 @@ class Session {
   }
   startTargetLeaveCountdown(user) {
     if (this.closed || this.targetLeaveTimer) return;
-    auditLog({
-      guild: this.guild,
-      title: '⏳ Scheduled voice departure',
-      description: `${formatUser(user)} left the bot’s voice channel. The bot will leave in 3 minutes unless they rejoin.`,
-      color: 0xF1C40F,
-      fields: [
-        { name: 'Voice channel', value: `<#${this.channelId}>`, inline: true },
-        { name: 'Grace period', value: '3 minutes', inline: true },
-        { name: 'Scheduled action', value: 'Disconnect from voice if the user has not returned.' },
-      ],
-    });
+    console.log(`[VOICE] ${formatUser(user)} left; disconnecting in 3 minutes unless they return.`);
     this.targetLeaveTimer = setTimeout(() => {
       this.targetLeaveTimer = null;
       if (this.closed || sessions.get(this.guild.id) !== this) return;
@@ -257,13 +221,7 @@ class Session {
     if (!this.targetLeaveTimer) return;
     clearTimeout(this.targetLeaveTimer);
     this.targetLeaveTimer = null;
-    auditLog({
-      guild: this.guild,
-      title: '✅ Scheduled departure cancelled',
-      description: `${formatUser(user)} rejoined the bot’s voice channel before the 3-minute grace period expired.`,
-      color: 0x57F287,
-      fields: [{ name: 'Voice channel', value: `<#${this.channelId}>` }],
-    });
+    console.log(`[VOICE] ${formatUser(user)} returned; cancelled the pending disconnect.`);
   }
   close(reason = 'Voice connection closed.') {
     if (this.closed) return;
@@ -273,15 +231,9 @@ class Session {
     this.queue = [];
     this.skip();
     this.subscription?.unsubscribe();
-    if (this.connection.state.status !== VCS.Destroyed) this.connection.destroy();
+    if (this.connection.state.status !== VCS.Destroyed)     this.connection.destroy();
     if (sessions.get(this.guild.id) === this) sessions.delete(this.guild.id);
-    auditLog({
-      guild: this.guild,
-      title: '🔌 Bot left voice',
-      description: reason,
-      color: 0xED4245,
-      fields: [{ name: 'Voice channel', value: `<#${this.channelId}>` }],
-    });
+    console.log(`[VOICE] Disconnected: ${reason}`);
   }
   async play(file) {
     const proc = spawn(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-i', file,
@@ -378,16 +330,6 @@ class Session {
           await this.play(file);
         } catch (e) {
           console.error('[SPEECH]', e.message);
-          auditLog({
-            guild: this.guild,
-            title: '⚠️ Speech request failed',
-            description: e.message,
-            color: 0xED4245,
-            fields: [
-              { name: 'Requested by', value: formatUser(this.guild.members.cache.get(item.userId)?.user) },
-              { name: 'Voice channel', value: `<#${this.channelId}>` },
-            ],
-          });
           if (!this.closed && !item.cancelled)
             await notify(this.textChannel, 'Speech failed. Check the [SPEECH] error in the terminal.');
         } finally {
@@ -437,16 +379,6 @@ async function handle(i) {
       sessions.set(i.guildId, s);
       const warning = info.missing.length ? `\nDiscord reports these permissions missing: ${info.missing.join(', ')}. Fix them on the bot's channel permissions if audio fails.` : '';
       const muted = info.me.voice.serverMute ? '\nThe bot is server-muted. A moderator must unmute it.' : '';
-      auditLog({
-        guild: i.guild,
-        title: '🔊 Bot joined voice',
-        description: `${formatUser(i.user)} started a voice session.`,
-        color: 0x57F287,
-        fields: [
-          { name: 'Voice channel', value: channelField(info.channel), inline: true },
-          { name: 'Text channel', value: channelField(i.channel), inline: true },
-        ],
-      });
       return reply(i, `Joined **${info.channel.name}**. Use /say or type \`=hello\` here.${warning}${muted}`);
     } catch (e) {
       if (connection && connection.state.status !== VCS.Destroyed) connection.destroy();
@@ -469,7 +401,18 @@ async function handle(i) {
     profile(member.id).rate = i.options.getInteger('percent', true); save();
     return reply(i, `Your speed is now ${profile(member.id).rate}%.`);
   }
-  if (name === 'say') return reply(i, `Queued. Position: ${enqueue(member, i.options.getString('message', true))}.`);
+  if (name === 'say') {
+    const text = i.options.getString('message', true);
+    const position = enqueue(member, text);
+    await auditLog({
+      guild: i.guild,
+      title: `🗣️ ${member.displayName} said`,
+      description: text,
+      color: 0x3498DB,
+      fields: [{ name: 'From', value: '/say', inline: true }],
+    });
+    return reply(i, `Queued. Position: ${position}.`);
+  }
   const s = getSession(member);
   if (name === 'queue') return reply(i, `Waiting: ${s.queue.length}/20. Active speech: ${s.current ? 'yes' : 'no'}.`);
   if (name === 'skip') {
@@ -491,141 +434,31 @@ client.on(Events.InteractionCreate, async i => {
   try {
     await i.deferReply({ flags: MessageFlags.Ephemeral });
     await handle(i);
-    await auditLog({
-      guild: i.guild,
-      title: '⚡ Slash command completed',
-      description: `/${i.commandName} completed successfully.`,
-      color: 0x5865F2,
-      fields: [
-        { name: 'User', value: formatUser(i.user), inline: true },
-        { name: 'Command', value: `/${i.commandName}`, inline: true },
-        { name: 'Options', value: commandOptions(i.options.data) },
-        { name: 'Used in', value: channelField(i.channel) },
-        ...(i.member?.voice?.channel ? [{ name: 'Voice channel', value: channelField(i.member.voice.channel) }] : []),
-      ],
-    });
   } catch (e) {
     console.error('[COMMAND]', e.message);
-    await auditLog({
-      guild: i.guild,
-      title: '⚠️ Slash command failed',
-      description: `/${i.commandName} failed: ${e.message}`,
-      color: 0xED4245,
-      fields: [
-        { name: 'User', value: formatUser(i.user), inline: true },
-        { name: 'Command', value: `/${i.commandName}`, inline: true },
-        { name: 'Options', value: commandOptions(i.options.data) },
-        { name: 'Used in', value: channelField(i.channel) },
-      ],
-    });
     await reply(i, e.message.slice(0, 1900)).catch(err => console.error('[REPLY]', err.message));
   }
 });
 client.on(Events.MessageCreate, async m => {
-  if (!m.guild || m.channelId === LOG_CHANNEL_ID) return;
-  void auditLog({
-    guild: m.guild,
-    title: '📝 Message sent',
-    description: m.content || '(no text content)',
-    color: 0x3498DB,
-    fields: [
-      { name: 'Author', value: formatUser(m.author), inline: true },
-      { name: 'Channel', value: channelField(m.channel), inline: true },
-      ...(m.attachments.size ? [{
-        name: `Attachments (${m.attachments.size})`,
-        value: [...m.attachments.values()].map(a => `${a.name || 'file'} — ${a.url}`).join('\n'),
-      }] : []),
-      { name: 'Message ID', value: m.id, inline: true },
-    ],
-  });
-  if (m.author.bot || !m.content.startsWith('=')) return;
+  if (m.author.bot || !m.guild || !m.content.startsWith('=')) return;
   const s = sessions.get(m.guildId);
   if (!s || m.channelId !== s.textChannel.id) return;
-  try { enqueue(m.member || await m.guild.members.fetch(m.author.id), m.cleanContent.slice(1)); }
-  catch (e) {
+  const text = m.content.slice(1).trim();
+  try {
+    enqueue(m.member || await m.guild.members.fetch(m.author.id), text);
     await auditLog({
       guild: m.guild,
-      title: '⚠️ Prefix command rejected',
-      description: e.message,
-      color: 0xED4245,
-      fields: [
-        { name: 'User', value: formatUser(m.author), inline: true },
-        { name: 'Channel', value: channelField(m.channel), inline: true },
-        { name: 'Message', value: m.content },
-      ],
+      title: `🗣️ ${m.member?.displayName || m.author.username} said`,
+      description: text || '(empty message)',
+      color: 0x3498DB,
+      fields: [{ name: 'From', value: channelField(m.channel), inline: true }],
     });
+  }
+  catch (e) {
     await notify(m.channel, e.message);
   }
 });
-client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
-  if (!newMessage.guild || newMessage.channelId === LOG_CHANNEL_ID) return;
-  let before = oldMessage;
-  let after = newMessage;
-  try {
-    if (before.partial) before = await before.fetch();
-    if (after.partial) after = await after.fetch();
-  } catch (e) {
-    console.error('[AUDIT] Could not fetch an edited message:', e.message);
-  }
-  const beforeAttachments = [...(before.attachments?.values() || [])].map(a => a.url).join('\n');
-  const afterAttachments = [...(after.attachments?.values() || [])].map(a => a.url).join('\n');
-  if (before.content === after.content && beforeAttachments === afterAttachments) return;
-  await auditLog({
-    guild: newMessage.guild,
-    title: '✏️ Message edited',
-    description: `**Before**\n${before.content || '(no text content)'}\n\n**After**\n${after.content || '(no text content)'}`,
-    color: 0xF1C40F,
-    fields: [
-      { name: 'Author', value: formatUser(after.author), inline: true },
-      { name: 'Channel', value: channelField(after.channel), inline: true },
-      ...(before.attachments?.size ? [{
-        name: 'Attachments before',
-        value: [...before.attachments.values()].map(a => `${a.name || 'file'} — ${a.url}`).join('\n'),
-      }] : []),
-      ...(after.attachments?.size ? [{
-        name: 'Attachments after',
-        value: [...after.attachments.values()].map(a => `${a.name || 'file'} — ${a.url}`).join('\n'),
-      }] : []),
-      { name: 'Message', value: `[Open message](https://discord.com/channels/${newMessage.guildId}/${newMessage.channelId}/${newMessage.id})` },
-    ],
-  });
-});
-client.on(Events.MessageDelete, async message => {
-  if (!message.guild || message.channelId === LOG_CHANNEL_ID) return;
-  let deleted = message;
-  try { if (deleted.partial) deleted = await deleted.fetch(); }
-  catch (e) { console.error('[AUDIT] Deleted message content was unavailable:', e.message); }
-  await auditLog({
-    guild: message.guild,
-    title: '🗑️ Message deleted',
-    description: deleted.content || '(content unavailable or no text content)',
-    color: 0xED4245,
-    fields: [
-      { name: 'Author', value: formatUser(deleted.author), inline: true },
-      { name: 'Channel', value: channelField(message.channel), inline: true },
-      ...(deleted.attachments?.size ? [{
-        name: `Deleted attachments (${deleted.attachments.size})`,
-        value: [...deleted.attachments.values()].map(a => `${a.name || 'file'} — ${a.url}`).join('\n'),
-      }] : []),
-      { name: 'Message ID', value: message.id, inline: true },
-    ],
-  });
-});
-client.on(Events.MessageBulkDelete, async messages => {
-  const first = messages.first();
-  if (!first?.guild || first.channelId === LOG_CHANNEL_ID) return;
-  await auditLog({
-    guild: first.guild,
-    title: '🧹 Bulk message deletion',
-    color: 0xED4245,
-    fields: [
-      { name: 'Channel', value: channelField(first.channel), inline: true },
-      { name: 'Messages deleted', value: String(messages.size), inline: true },
-      { name: 'Cached message IDs', value: [...messages.keys()].slice(0, 40).join(', ') || 'Unavailable' },
-    ],
-  });
-});
-client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+client.on(Events.VoiceStateUpdate, (oldState, newState) => {
   const guild = newState.guild;
   const user = newState.member?.user || oldState.member?.user;
   const session = sessions.get(guild.id);
@@ -635,165 +468,6 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
     else if (newState.channelId === session.channelId)
       session.cancelTargetLeaveCountdown(user);
   }
-  const changes = [];
-  if (oldState.channelId !== newState.channelId) {
-    changes.push(`Channel: ${oldState.channel ? channelField(oldState.channel) : 'not in voice'} → ${newState.channel ? channelField(newState.channel) : 'not in voice'}`);
-  }
-  if (oldState.serverMute !== newState.serverMute) changes.push(`Server mute: ${oldState.serverMute ? 'on' : 'off'} → ${newState.serverMute ? 'on' : 'off'}`);
-  if (oldState.serverDeaf !== newState.serverDeaf) changes.push(`Server deaf: ${oldState.serverDeaf ? 'on' : 'off'} → ${newState.serverDeaf ? 'on' : 'off'}`);
-  if (oldState.selfMute !== newState.selfMute) changes.push(`Self mute: ${oldState.selfMute ? 'on' : 'off'} → ${newState.selfMute ? 'on' : 'off'}`);
-  if (oldState.selfDeaf !== newState.selfDeaf) changes.push(`Self deaf: ${oldState.selfDeaf ? 'on' : 'off'} → ${newState.selfDeaf ? 'on' : 'off'}`);
-  if (oldState.streaming !== newState.streaming) changes.push(`Streaming: ${oldState.streaming ? 'on' : 'off'} → ${newState.streaming ? 'on' : 'off'}`);
-  if (oldState.selfVideo !== newState.selfVideo) changes.push(`Camera: ${oldState.selfVideo ? 'on' : 'off'} → ${newState.selfVideo ? 'on' : 'off'}`);
-  if (!changes.length) return;
-  await auditLog({
-    guild,
-    title: '🎙️ Voice activity',
-    color: 0x9B59B6,
-    fields: [
-      { name: 'User', value: formatUser(user), inline: true },
-      { name: 'Changes', value: changes.join('\n') },
-    ],
-  });
-});
-client.on(Events.GuildMemberAdd, member => auditLog({
-  guild: member.guild,
-  title: '👋 Member joined',
-  color: 0x57F287,
-  fields: [
-    { name: 'Member', value: formatUser(member.user), inline: true },
-    { name: 'Account created', value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:F>`, inline: true },
-  ],
-}));
-client.on(Events.GuildMemberRemove, member => auditLog({
-  guild: member.guild,
-  title: '🚪 Member left',
-  color: 0xED4245,
-  fields: [{ name: 'Member', value: formatUser(member.user) }],
-}));
-client.on(Events.GuildMemberUpdate, (oldMember, newMember) => {
-  const changes = [];
-  if (oldMember.nickname !== newMember.nickname)
-    changes.push(`Nickname: ${oldMember.nickname || 'none'} → ${newMember.nickname || 'none'}`);
-  const addedRoles = newMember.roles.cache.filter(role => !oldMember.roles.cache.has(role.id));
-  const removedRoles = oldMember.roles.cache.filter(role => !newMember.roles.cache.has(role.id));
-  if (addedRoles.size) changes.push(`Roles added: ${addedRoles.map(role => role.name).join(', ')}`);
-  if (removedRoles.size) changes.push(`Roles removed: ${removedRoles.map(role => role.name).join(', ')}`);
-  if (oldMember.communicationDisabledUntilTimestamp !== newMember.communicationDisabledUntilTimestamp)
-    changes.push(`Timeout: ${oldMember.communicationDisabledUntil?.toISOString() || 'none'} → ${newMember.communicationDisabledUntil?.toISOString() || 'none'}`);
-  if (!changes.length) return;
-  return auditLog({
-    guild: newMember.guild,
-    title: '🛡️ Member updated',
-    color: 0xE67E22,
-    fields: [
-      { name: 'Member', value: formatUser(newMember.user), inline: true },
-      { name: 'Changes', value: changes.join('\n') },
-    ],
-  });
-});
-client.on(Events.GuildBanAdd, ban => auditLog({
-  guild: ban.guild,
-  title: '⛔ Member banned',
-  color: 0xED4245,
-  fields: [{ name: 'User', value: formatUser(ban.user), inline: true }],
-}));
-client.on(Events.GuildBanRemove, ban => auditLog({
-  guild: ban.guild,
-  title: '♻️ Member unbanned',
-  color: 0x57F287,
-  fields: [{ name: 'User', value: formatUser(ban.user), inline: true }],
-}));
-client.on(Events.ChannelCreate, channel => {
-  if (channel.guild) return auditLog({
-    guild: channel.guild,
-    title: '📁 Channel created',
-    color: 0x57F287,
-    fields: [
-      { name: 'Channel', value: channelField(channel), inline: true },
-      { name: 'Type', value: String(channel.type), inline: true },
-    ],
-  });
-});
-client.on(Events.ChannelDelete, channel => {
-  if (channel.guild) return auditLog({
-    guild: channel.guild,
-    title: '🗃️ Channel deleted',
-    color: 0xED4245,
-    fields: [
-      { name: 'Channel', value: `${channel.name} (${channel.id})`, inline: true },
-      { name: 'Type', value: String(channel.type), inline: true },
-    ],
-  });
-});
-client.on(Events.ChannelUpdate, (oldChannel, newChannel) => {
-  if (!newChannel.guild) return;
-  const changes = [];
-  for (const key of ['name', 'topic', 'parentId', 'bitrate', 'userLimit', 'rateLimitPerUser', 'nsfw']) {
-    if (oldChannel[key] !== newChannel[key])
-      changes.push(`${key}: ${oldChannel[key] ?? 'none'} → ${newChannel[key] ?? 'none'}`);
-  }
-  if (changes.length) return auditLog({
-    guild: newChannel.guild,
-    title: '🛠️ Channel updated',
-    color: 0xF1C40F,
-    fields: [
-      { name: 'Channel', value: channelField(newChannel), inline: true },
-      { name: 'Changes', value: changes.join('\n') },
-    ],
-  });
-});
-client.on(Events.GuildRoleCreate, role => auditLog({
-  guild: role.guild,
-  title: '🪪 Role created',
-  color: 0x57F287,
-  fields: [{ name: 'Role', value: `${role.name} (${role.id})` }],
-}));
-client.on(Events.GuildRoleDelete, role => auditLog({
-  guild: role.guild,
-  title: '🪪 Role deleted',
-  color: 0xED4245,
-  fields: [{ name: 'Role', value: `${role.name} (${role.id})` }],
-}));
-client.on(Events.GuildRoleUpdate, (oldRole, newRole) => {
-  const changes = [];
-  for (const key of ['name', 'color', 'hoist', 'mentionable', 'position']) {
-    if (oldRole[key] !== newRole[key])
-      changes.push(`${key}: ${oldRole[key]} → ${newRole[key]}`);
-  }
-  if (changes.length) return auditLog({
-    guild: newRole.guild,
-    title: '🪪 Role updated',
-    color: 0xF1C40F,
-    fields: [
-      { name: 'Role', value: `${newRole.name} (${newRole.id})`, inline: true },
-      { name: 'Changes', value: changes.join('\n') },
-    ],
-  });
-});
-client.on(Events.GuildAuditLogEntryCreate, (entry, guild) => auditLog({
-  guild,
-  title: '📋 Server audit action',
-  color: 0xE67E22,
-  fields: [
-    { name: 'Action', value: String(entry.action), inline: true },
-    { name: 'Executor', value: formatUser(entry.executor), inline: true },
-    { name: 'Target', value: entry.target ? `${entry.target} (${entry.targetId})` : entry.targetId || 'Unknown target', inline: true },
-    { name: 'Reason', value: entry.reason || 'No reason provided' },
-    ...(entry.changes?.length ? [{
-      name: 'Changes',
-      value: JSON.stringify(entry.changes, (_, value) =>
-        typeof value === 'bigint' ? value.toString() : value),
-    }] : []),
-  ],
-}));
-client.on(Events.Error, e => {
-  console.error('[DISCORD]', e.message);
-  auditLog({
-    title: '⚠️ Discord client error',
-    description: e.message,
-    color: 0xED4245,
-  });
 });
 client.once(Events.ClientReady, async c => {
   console.log(`[READY] ${c.user.tag}\n${generateDependencyReport()}`);
@@ -806,12 +480,12 @@ client.once(Events.ClientReady, async c => {
       throw new Error(`Audit channel ${LOG_CHANNEL_ID} is unavailable or is not a guild text channel.`);
     const logBotMember = await logChannel.guild.members.fetchMe({ force: true });
     const logPermissions = logChannel.permissionsFor(logBotMember);
-    const missingLogPermissions = ['ViewChannel', 'SendMessages', 'EmbedLinks', 'ViewAuditLog']
+    const missingLogPermissions = ['ViewChannel', 'SendMessages', 'EmbedLinks']
       .filter(name => !logPermissions?.has(P[name]));
     if (missingLogPermissions.length)
       throw new Error(`The bot needs ${missingLogPermissions.join(', ')} in audit channel ${LOG_CHANNEL_ID}.`);
     await guild.commands.set(commands.map(cmd => cmd.toJSON()));
-    console.log(`[COMMANDS] Registered. Audit logs go to ${LOG_CHANNEL_ID}. Join VC and use /come.`);
+    console.log(`[COMMANDS] Registered. Speech logs go to ${LOG_CHANNEL_ID}. Join VC and use /come.`);
   } catch (e) { console.error('[SETUP]', e.message); process.exitCode = 1; await client.destroy(); }
 });
 setInterval(() => {
